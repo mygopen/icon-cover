@@ -56,9 +56,11 @@
                 <div id="previewWrapper" class="bg-white p-3 rounded-2xl border border-slate-200 shadow-xl">
                     <div id="captureArea" class="preview-container flex items-center justify-center bg-pink-50 relative transition-colors duration-500">
                         <!-- 圖標核心 -->
-                        <div id="iconContainer" class="flex items-center justify-center">
+                        <div id="iconContainer" class="flex items-center justify-center pointer-events-none">
                             <!-- SVG 會由 JS 動態注入 -->
                         </div>
+                        <canvas id="mosaicOverlay" class="absolute inset-0 w-full h-full pointer-events-none"></canvas>
+                        <div id="selectionBox" class="absolute border-2 border-dashed border-blue-500 bg-blue-500/20 hidden pointer-events-none"></div>
                     </div>
                 </div>
                 
@@ -84,7 +86,7 @@
                 </section>
 
                 <!-- 2. 搜尋圖標 -->
-                <section class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col h-[480px]">
+                <section class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col h-[400px]">
                     <h2 class="text-sm font-bold uppercase tracking-widest text-slate-400 mb-4 flex items-center gap-2">
                         <i data-lucide="search" size="16"></i> 2. 搜尋圖標
                     </h2>
@@ -96,6 +98,43 @@
 
                     <div id="iconGrid" class="flex-1 overflow-y-auto grid grid-cols-4 gap-2 pr-1 no-scrollbar">
                         <!-- 圖標由 JS 注入 -->
+                    </div>
+                </section>
+
+                <!-- 3. 自定義背景 -->
+                <section class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                    <h2 class="text-sm font-bold uppercase tracking-widest text-slate-400 mb-4 flex items-center gap-2">
+                        <i data-lucide="image" size="16"></i> 3. 自定義背景
+                    </h2>
+                    <input type="file" id="bgUpload" accept="image/*" class="hidden">
+                    <button id="bgUploadBtn" class="w-full py-3 border-2 border-dashed border-slate-200 rounded-xl text-slate-500 hover:border-blue-400 hover:text-blue-500 transition-all flex flex-col items-center gap-1">
+                        <i data-lucide="upload" size="20"></i>
+                        <span class="text-xs font-bold">上傳背景圖片</span>
+                    </button>
+                </section>
+
+                <!-- 4. 馬賽克設定 -->
+                <section class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                    <h2 class="text-sm font-bold uppercase tracking-widest text-slate-400 mb-4 flex items-center gap-2">
+                        <i data-lucide="grid" size="16"></i> 4. 馬賽克設定
+                    </h2>
+                    <div class="space-y-4">
+                        <div class="flex items-center justify-between">
+                            <span class="text-sm font-medium text-slate-700">啟用框選馬賽克</span>
+                            <button id="mosaicToggle" class="relative inline-flex h-6 w-11 items-center rounded-full bg-slate-200 transition-colors focus:outline-none">
+                                <span id="mosaicToggleThumb" class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform translate-x-1"></span>
+                            </button>
+                        </div>
+                        <div class="space-y-2">
+                            <div class="flex justify-between">
+                                <label class="text-sm font-medium text-slate-700">馬賽克強度</label>
+                                <span id="intensityValue" class="text-sm text-slate-500">20</span>
+                            </div>
+                            <input type="range" id="mosaicIntensity" min="5" max="100" step="5" value="20" class="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600">
+                        </div>
+                        <button id="clearMosaics" class="w-full py-2 px-4 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-sm font-bold transition-colors flex items-center justify-center gap-2">
+                            <i data-lucide="trash-2" size="16"></i> 清除所有馬賽克
+                        </button>
                     </div>
                 </section>
             </div>
@@ -121,6 +160,14 @@
         let currentIcon = 'map-pin';
         let customColor = themes[0].icon;
 
+        // 新增狀態
+        let mosaicZones = [];
+        let isMosaicMode = false;
+        let isDragging = false;
+        let startX, startY;
+        let backgroundImage = null;
+        let currentIntensity = 20;
+
         // 初始化
         window.onload = () => {
             initThemes();
@@ -132,6 +179,119 @@
         // 監聽搜尋
         document.getElementById('searchInput').addEventListener('input', (e) => {
             filterIcons(e.target.value);
+        });
+
+        // 自定義背景上傳
+        document.getElementById('bgUploadBtn').onclick = () => document.getElementById('bgUpload').click();
+        document.getElementById('bgUpload').onchange = (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    backgroundImage = event.target.result;
+                    updatePreview();
+                };
+                reader.readAsDataURL(file);
+            }
+        };
+
+        // 馬賽克控制
+        document.getElementById('mosaicToggle').onclick = () => {
+            isMosaicMode = !isMosaicMode;
+            const thumb = document.getElementById('mosaicToggleThumb');
+            const btn = document.getElementById('mosaicToggle');
+            const captureArea = document.getElementById('captureArea');
+
+            if (isMosaicMode) {
+                thumb.style.transform = 'translateX(1.25rem)';
+                btn.classList.replace('bg-slate-200', 'bg-blue-600');
+                captureArea.style.cursor = 'crosshair';
+            } else {
+                thumb.style.transform = 'translateX(0.25rem)';
+                btn.classList.replace('bg-blue-600', 'bg-slate-200');
+                captureArea.style.cursor = 'default';
+            }
+        };
+
+        document.getElementById('mosaicIntensity').oninput = (e) => {
+            currentIntensity = parseInt(e.target.value);
+            document.getElementById('intensityValue').innerText = currentIntensity;
+        };
+
+        document.getElementById('clearMosaics').onclick = () => {
+            mosaicZones = [];
+            renderMosaics();
+        };
+
+        // 監聽鼠標框選
+        const captureArea = document.getElementById('captureArea');
+        const selectionBox = document.getElementById('selectionBox');
+
+        captureArea.addEventListener('mousedown', (e) => {
+            if (!isMosaicMode) return;
+            isDragging = true;
+            const rect = captureArea.getBoundingClientRect();
+            startX = e.clientX - rect.left;
+            startY = e.clientY - rect.top;
+
+            selectionBox.style.left = startX + 'px';
+            selectionBox.style.top = startY + 'px';
+            selectionBox.style.width = '0px';
+            selectionBox.style.height = '0px';
+            selectionBox.classList.remove('hidden');
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            const rect = captureArea.getBoundingClientRect();
+            let currentX = e.clientX - rect.left;
+            let currentY = e.clientY - rect.top;
+
+            // 限制在區域內
+            currentX = Math.max(0, Math.min(currentX, rect.width));
+            currentY = Math.max(0, Math.min(currentY, rect.height));
+
+            const x = Math.min(startX, currentX);
+            const y = Math.min(startY, currentY);
+            const w = Math.abs(currentX - startX);
+            const h = Math.abs(currentY - startY);
+
+            selectionBox.style.left = x + 'px';
+            selectionBox.style.top = y + 'px';
+            selectionBox.style.width = w + 'px';
+            selectionBox.style.height = h + 'px';
+        });
+
+        window.addEventListener('mouseup', (e) => {
+            if (!isDragging) return;
+            isDragging = false;
+            selectionBox.classList.add('hidden');
+
+            const rect = captureArea.getBoundingClientRect();
+            let endX = e.clientX - rect.left;
+            let endY = e.clientY - rect.top;
+
+            endX = Math.max(0, Math.min(endX, rect.width));
+            endY = Math.max(0, Math.min(endY, rect.height));
+
+            const x = Math.min(startX, endX);
+            const y = Math.min(startY, endY);
+            const w = Math.abs(endX - startX);
+            const h = Math.abs(endY - startY);
+
+            if (w > 5 && h > 5) {
+                // 轉換為 1920x968 座標
+                const scaleX = 1920 / rect.width;
+                const scaleY = 968 / rect.height;
+                mosaicZones.push({
+                    x: x * scaleX,
+                    y: y * scaleY,
+                    w: w * scaleX,
+                    h: h * scaleY,
+                    intensity: currentIntensity
+                });
+                renderMosaics();
+            }
         });
 
         // 渲染主題按鈕
@@ -186,7 +346,15 @@
             const captureArea = document.getElementById('captureArea');
             const iconContainer = document.getElementById('iconContainer');
 
-            captureArea.style.backgroundColor = currentTheme.bg;
+            if (backgroundImage) {
+                captureArea.style.backgroundColor = 'transparent';
+                captureArea.style.backgroundImage = `url(${backgroundImage})`;
+                captureArea.style.backgroundSize = 'cover';
+                captureArea.style.backgroundPosition = 'center';
+            } else {
+                captureArea.style.backgroundColor = currentTheme.bg;
+                captureArea.style.backgroundImage = 'none';
+            }
 
             // 清空並重新注入圖標
             iconContainer.innerHTML = `
@@ -197,6 +365,102 @@
             `;
             
             lucide.createIcons();
+
+            // 延遲一點點確保 SVG 已渲染
+            setTimeout(renderMosaics, 100);
+        }
+
+        // 渲染馬賽克層
+        async function renderMosaics() {
+            const overlay = document.getElementById('mosaicOverlay');
+            const ctx = overlay.getContext('2d');
+            overlay.width = 1920;
+            overlay.height = 968;
+            ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+            if (mosaicZones.length === 0) return;
+
+            // 創建一個臨時畫布來捕捉目前內容
+            const sourceCanvas = document.createElement('canvas');
+            sourceCanvas.width = 1920;
+            sourceCanvas.height = 968;
+            const sCtx = sourceCanvas.getContext('2d');
+
+            // 1. 繪製背景
+            if (backgroundImage) {
+                const img = new Image();
+                img.src = backgroundImage;
+                await new Promise(r => img.onload = r);
+
+                // Cover 邏輯
+                const aspect = img.width / img.height;
+                const targetAspect = 1920 / 968;
+                let dw, dh, dx, dy;
+                if (aspect > targetAspect) {
+                    dh = 968;
+                    dw = 968 * aspect;
+                    dx = (1920 - dw) / 2;
+                    dy = 0;
+                } else {
+                    dw = 1920;
+                    dh = 1920 / aspect;
+                    dx = 0;
+                    dy = (968 - dh) / 2;
+                }
+                sCtx.drawImage(img, dx, dy, dw, dh);
+            } else {
+                sCtx.fillStyle = currentTheme.bg;
+                sCtx.fillRect(0, 0, 1920, 968);
+            }
+
+            // 2. 繪製圖標
+            const svgNode = document.querySelector('#iconContainer svg');
+            if (svgNode) {
+                const iconSize = 480;
+                const x = (1920 - iconSize) / 2;
+                const y = (968 - iconSize) / 2;
+
+                const svgData = new XMLSerializer().serializeToString(svgNode);
+                const svgBlob = new Blob([svgData], {type: 'image/svg+xml;charset=utf-8'});
+                const url = URL.createObjectURL(svgBlob);
+                const img = new Image();
+                await new Promise(resolve => {
+                    img.onload = () => {
+                        sCtx.drawImage(img, x, y, iconSize, iconSize);
+                        URL.revokeObjectURL(url);
+                        resolve();
+                    };
+                    img.src = url;
+                });
+            }
+
+            // 3. 應用馬賽克
+            mosaicZones.forEach(zone => {
+                applyMosaicEffect(sCtx, ctx, zone);
+            });
+        }
+
+        function applyMosaicEffect(sourceCtx, targetCtx, zone) {
+            const {x, y, w, h, intensity} = zone;
+            if (w <= 0 || h <= 0) return;
+
+            const blockSize = intensity;
+
+            // 創建小畫布
+            const smallW = Math.max(1, Math.round(w / blockSize));
+            const smallH = Math.max(1, Math.round(h / blockSize));
+
+            const mosaicCanvas = document.createElement('canvas');
+            mosaicCanvas.width = smallW;
+            mosaicCanvas.height = smallH;
+            const mCtx = mosaicCanvas.getContext('2d');
+
+            mCtx.imageSmoothingEnabled = false;
+            mCtx.drawImage(sourceCtx.canvas, x, y, w, h, 0, 0, smallW, smallH);
+
+            targetCtx.imageSmoothingEnabled = false;
+            targetCtx.drawImage(mosaicCanvas, 0, 0, smallW, smallH, x, y, w, h);
+            targetCtx.imageSmoothingEnabled = true;
         }
 
         // 下載圖片 (Canvas 渲染)
@@ -205,8 +469,30 @@
             const ctx = canvas.getContext('2d');
 
             // 1. 繪製背景
-            ctx.fillStyle = currentTheme.bg;
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            if (backgroundImage) {
+                const img = new Image();
+                img.src = backgroundImage;
+                await new Promise(r => img.onload = r);
+
+                const aspect = img.width / img.height;
+                const targetAspect = 1920 / 968;
+                let dw, dh, dx, dy;
+                if (aspect > targetAspect) {
+                    dh = 968;
+                    dw = 968 * aspect;
+                    dx = (1920 - dw) / 2;
+                    dy = 0;
+                } else {
+                    dw = 1920;
+                    dh = 1920 / aspect;
+                    dx = 0;
+                    dy = (968 - dh) / 2;
+                }
+                ctx.drawImage(img, dx, dy, dw, dh);
+            } else {
+                ctx.fillStyle = currentTheme.bg;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
 
             // 2. 繪製圖標
             const iconSize = 480; 
@@ -220,22 +506,38 @@
                 const url = URL.createObjectURL(svgBlob);
                 
                 const img = new Image();
-                img.onload = () => {
-                    ctx.drawImage(img, x, y, iconSize, iconSize);
-                    
-                    // 3. 下載
-                    const pngUrl = canvas.toDataURL("image/png");
-                    const downloadLink = document.createElement("a");
-                    downloadLink.href = pngUrl;
-                    downloadLink.download = `article-cover-${currentIcon}.png`;
-                    document.body.appendChild(downloadLink);
-                    downloadLink.click();
-                    document.body.removeChild(downloadLink);
-                    
-                    URL.revokeObjectURL(url);
-                };
-                img.src = url;
+                await new Promise(resolve => {
+                    img.onload = () => {
+                        ctx.drawImage(img, x, y, iconSize, iconSize);
+                        URL.revokeObjectURL(url);
+                        resolve();
+                    };
+                    img.src = url;
+                });
             }
+
+            // 3. 應用馬賽克 (直接在 ctx 上操作)
+            if (mosaicZones.length > 0) {
+                // 由於馬賽克需要讀取目前像素，我們需要一個源畫布
+                const sourceCanvas = document.createElement('canvas');
+                sourceCanvas.width = 1920;
+                sourceCanvas.height = 968;
+                const sCtx = sourceCanvas.getContext('2d');
+                sCtx.drawImage(canvas, 0, 0);
+
+                mosaicZones.forEach(zone => {
+                    applyMosaicEffect(sCtx, ctx, zone);
+                });
+            }
+
+            // 4. 下載
+            const pngUrl = canvas.toDataURL("image/png");
+            const downloadLink = document.createElement("a");
+            downloadLink.href = pngUrl;
+            downloadLink.download = `article-cover-${currentIcon}.png`;
+            document.body.appendChild(downloadLink);
+            downloadLink.click();
+            document.body.removeChild(downloadLink);
         };
     </script>
 </body>
