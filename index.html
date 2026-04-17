@@ -61,7 +61,7 @@
                 <div class="bg-blue-50 border border-blue-100 p-4 rounded-xl flex items-start gap-3">
                     <i data-lucide="info" class="text-blue-500 mt-0.5" size="18"></i>
                     <p class="text-xs text-blue-700 leading-relaxed">
-                        您現在可以搜尋來自 Lucide 與 Phosphor 的圖標。下載時系統會自動處理不同庫的渲染，產出高品質 1920x968 圖片。
+                        搜尋支援超過 2400 個以上的圖標 (Lucide + Phosphor)。下載時系統會自動處理不同庫的渲染，產出高品質 1920x968 圖片。
                     </p>
                 </div>
             </div>
@@ -86,6 +86,10 @@
                         <input type="text" id="searchInput" placeholder="搜尋名稱 (如 user, heart, fire...)" class="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm">
                     </div>
 
+                    <div id="loadingStatus" class="text-center text-slate-400 text-xs mb-2 hidden">
+                        正在載入完整圖標庫...
+                    </div>
+
                     <div id="iconGrid" class="flex-1 overflow-y-auto grid grid-cols-4 gap-2 pr-1 no-scrollbar">
                         </div>
                 </section>
@@ -96,7 +100,6 @@
     <canvas id="exportCanvas" width="1920" height="968" class="hidden"></canvas>
 
     <script>
-        // 1. 配置主題
         const themes = [
             { name: '粉紅', bg: '#FFF1F2', icon: '#E11D48' },
             { name: '粉藍', bg: '#EFF6FF', icon: '#2563EB' },
@@ -106,30 +109,15 @@
             { name: '粉青', bg: '#ECFEFF', icon: '#0891B2' },
         ];
 
-        // 2. 常用 Phosphor 圖標列表 (Core Library 包含所有，這裡列出常用作為預選)
-        const phosphorIconList = [
-            'apple-logo', 'android-logo', 'armchair', 'atom', 'baby', 'backpack', 'bank', 'battery-full', 
-            'beer-bottle', 'bicycle', 'bird', 'boat', 'books', 'briefcase', 'bug', 'cake', 'camera', 
-            'car', 'cat', 'coffee', 'cloud-sun', 'cookie', 'crown', 'desktop', 'dog', 'earphones', 
-            'fire', 'fish', 'flying-saucer', 'game-controller', 'ghost', 'gift', 'globe', 'guitar', 
-            'hamburger', 'heartbeat', 'ice-cream', 'key', 'leaf', 'lightning', 'map-trifold', 'moon', 
-            'music-notes', 'paint-brush', 'palette', 'paper-plane', 'paw-print', 'pizza', 'planet', 
-            'rocket', 'selection-all', 'shield-checkered', 'sketch-logo', 'sneaker', 'soccer-ball', 
-            'speaker-high', 'star', 'sun', 'target', 'ticket', 'train', 'tree-evergreen', 'trophy', 
-            'truck', 'umbrella', 'virus', 'wallet', 'watch', 'wrench', 'youtube-logo'
-        ];
-
-        // 狀態管理
         let currentTheme = themes[0];
         let currentIcon = 'map-pin';
-        let currentLib = 'lucide'; // 'lucide' 或 'phosphor'
+        let currentLib = 'lucide'; 
         let customColor = themes[0].icon;
 
         window.onload = () => {
             initThemes();
             initIcons();
             updatePreview();
-            lucide.createIcons();
         };
 
         document.getElementById('searchInput').addEventListener('input', (e) => {
@@ -154,21 +142,42 @@
             });
         }
 
-        function initIcons() {
+        async function initIcons() {
             const grid = document.getElementById('iconGrid');
+            const loadingStatus = document.getElementById('loadingStatus');
             
-            // 載入 Lucide 圖標
+            // 1. 同步載入 Lucide 圖標
             Object.keys(lucide.icons).forEach(name => {
                 const kebabName = name.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
                 appendIconBtn(grid, kebabName, 'lucide');
             });
-
-            // 載入 Phosphor 圖標
-            phosphorIconList.forEach(name => {
-                appendIconBtn(grid, name, 'phosphor');
-            });
-            
             lucide.createIcons();
+
+            // 2. 非同步載入全量 Phosphor 圖標
+            loadingStatus.classList.remove('hidden');
+            try {
+                // 讀取 Phosphor 的 CSS 檔案
+                const res = await fetch('https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css');
+                const css = await res.text();
+                
+                // 利用正則表達式提取所有 .ph-xxxx 的名稱
+                const matches = [...css.matchAll(/\.ph-([a-z0-9-]+)::?before/g)];
+                const phosphorIconNames = [...new Set(matches.map(m => m[1]))];
+                
+                phosphorIconNames.forEach(name => {
+                    appendIconBtn(grid, name, 'phosphor');
+                });
+
+                // 若此時已有搜尋文字，重新過濾一次
+                const currentSearch = document.getElementById('searchInput').value;
+                if(currentSearch) filterIcons(currentSearch);
+
+            } catch (err) {
+                console.error("無法動態獲取 Phosphor 清單：", err);
+                loadingStatus.innerText = "Phosphor 圖標載入失敗";
+            } finally {
+                loadingStatus.classList.add('hidden');
+            }
         }
 
         function appendIconBtn(grid, name, lib) {
@@ -214,7 +223,6 @@
                 `;
                 lucide.createIcons();
             } else {
-                // Phosphor 使用 Fill 樣式在封面上通常更好看
                 iconContainer.innerHTML = `
                     <i class="ph-fill ph-${currentIcon}" 
                        style="font-size: 160px; color: ${customColor}; opacity: 0.8;">
@@ -223,12 +231,11 @@
             }
         }
 
-        // 下載圖片 (支援雙圖標庫的繪製邏輯)
+        // 下載邏輯保持不變
         document.getElementById('downloadBtn').onclick = async () => {
             const canvas = document.getElementById('exportCanvas');
             const ctx = canvas.getContext('2d');
 
-            // 1. 繪製背景
             ctx.fillStyle = currentTheme.bg;
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -237,45 +244,27 @@
             const y = (canvas.height - iconSize) / 2;
 
             if (currentLib === 'lucide') {
-                // Lucide 繪製邏輯：透過 SVG Blob
                 const svgNode = document.querySelector('#iconContainer svg');
                 if (svgNode) {
                     await drawSvgToCanvas(ctx, svgNode, x, y, iconSize);
                     downloadCanvas(canvas);
                 }
             } else {
-                // Phosphor 繪製邏輯：因為 Core Library 是 Webfont，我們直接在畫布繪製文字
-                // 確保字體已加載，使用 Fill 變體繪製
                 ctx.fillStyle = customColor;
                 ctx.globalAlpha = 0.8;
-                ctx.font = `${iconSize}px "Phosphor-Fill"`; // Phosphor Fill 樣式的字體名稱
+                ctx.font = `${iconSize}px "Phosphor-Fill"`; 
                 ctx.textAlign = "center";
                 ctx.textBaseline = "middle";
                 
-                // 取得對應的 Unicode 字元或直接使用 DOM 轉換
-                // 這裡最保險且簡單的做法是將當前渲染的 <i> 轉為臨時 SVG 再繪製
-                const iconElement = document.querySelector('#iconContainer i');
-                const svgString = `
-                    <svg xmlns="http://www.w3.org/2000/svg" width="${iconSize}" height="${iconSize}" viewBox="0 0 256 256">
-                        <foreignObject width="100%" height="100%">
-                            <div xmlns="http://www.w3.org/1999/xhtml" style="font-size:240px; color:${customColor}; display:flex; align-items:center; justify-content:center; font-family:Phosphor-Fill;">
-                                ${iconElement.innerText || ''}
-                            </div>
-                        </foreignObject>
-                    </svg>`;
-                
-                // 更簡單的做法：Phosphor 有提供 SVG 版本的 CDN，但為了符合「Core Library」要求
-                // 這裡我們直接使用 ctx.fillText 配合特定字型。如果字體尚未加載，建議改用繪製 SVG 節點的方法
                 const tempDiv = document.createElement('div');
                 tempDiv.style.fontFamily = 'Phosphor-Fill';
                 tempDiv.className = `ph-fill ph-${currentIcon}`;
                 document.body.appendChild(tempDiv);
                 
-                // 獲取該圖標的 Content (Unicode)
                 const char = window.getComputedStyle(tempDiv, ':before').content.replace(/['"]/g, '');
                 document.body.removeChild(tempDiv);
 
-                ctx.fillText(char, canvas.width/2, canvas.height/2 + 20); // 加上位移修正居中
+                ctx.fillText(char, canvas.width/2, canvas.height/2 + 20); 
                 ctx.globalAlpha = 1.0;
                 downloadCanvas(canvas);
             }
